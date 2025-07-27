@@ -7,6 +7,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 import unicodedata
+import platform
 
 # 输入cookie以获取更优画质的视频，默认下载最优画质。
 headers = {
@@ -76,12 +77,34 @@ def save(title, audio_url, video_url, update_progress):
 
 def merge_data(title, update_progress):
     os.makedirs("video", exist_ok=True)
-    command = f'ffmpeg -y -i "{title}_only.mp4" -i "{title}_only.mp3" -c:v copy -c:a aac -strict experimental "./video/{title}.mp4"'
+    # 检测 ffmpeg 路径
+    ffmpeg_path = get_ffmpeg_path()
+    command = f'"{ffmpeg_path}" -y -i "{title}_only.mp4" -i "{title}_only.mp3" -c:v copy -c:a aac -strict experimental "./video/{title}.mp4"'
     update_progress("合并音视频...", 90)
-    subprocess.run(command, shell=True)
+    # 使用 errors='ignore' 或 errors='replace' 来处理编码错误
+    result = subprocess.run(command, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace')
+    if result.returncode != 0:
+        error_msg = f"FFmpeg 错误: {result.stderr}"
+        print(error_msg)
+        # 在GUI中显示错误
+        messagebox.showerror("错误", "音视频合并失败")
+        return False  # 返回失败状态
     update_progress("完成", 100)
     os.remove(f'{title}_only.mp3')
     os.remove(f'{title}_only.mp4')
+    return True  # 返回成功状态
+
+def get_ffmpeg_path():
+    project_dir = os.path.dirname(__file__)
+    if platform.system() == 'Windows':
+        ffmpeg_exe = 'ffmpeg.exe'
+    else:
+        ffmpeg_exe = 'ffmpeg'
+
+    project_ffmpeg = os.path.join(project_dir, 'ffmpeg', 'bin', ffmpeg_exe)
+    if os.path.exists(project_ffmpeg):
+        return project_ffmpeg
+    return ffmpeg_exe
 
 
 # GUI部分

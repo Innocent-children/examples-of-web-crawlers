@@ -41,11 +41,40 @@ def get_info(html_url):
         title = sanitize_filename(title)
     else:
         title = 'bili_video'
-    # 提取视频内容
-    html_data = re.findall('window.__playinfo__=(.*?)</script>', response.text)[0]
-    json_data = json.loads(html_data)
-    audio_url = json_data['data']['dash']['audio'][0]['baseUrl']
-    video_url = json_data['data']['dash']['video'][0]['baseUrl']
+
+    # 先尝试普通方式
+    playinfo_match = re.findall(r'window\.__playinfo__=(\{.*?\})</script>', response.text)
+    if playinfo_match:
+        json_data = json.loads(playinfo_match[0])
+        data = json_data.get("data")
+    else:
+        # 检查是不是 bangumi/ep 页面
+        ep_match = re.search(r'/ep(\d+)', html_url)
+        if not ep_match:
+            raise Exception("未找到视频信息，无法解析。")
+        ep_id = ep_match.group(1)
+        api_url = f"https://api.bilibili.com/pgc/player/web/playurl?ep_id={ep_id}&qn=80&fnval=4048"
+        api_response = requests.get(api_url, headers=headers)
+        json_data = api_response.json()
+        if json_data.get('code') != 0:
+            raise Exception("番剧接口返回异常，无法下载。")
+        # 关键处：番剧接口返回的是 result 字段
+        data = json_data.get("result")
+    if not data:
+        raise Exception("未找到视频流信息。")
+
+    # 优先使用 dash 流
+    if "dash" in data:
+        dash = data["dash"]
+        audio_url = dash['audio'][0]['baseUrl']
+        video_url = dash['video'][0]['baseUrl']
+    # 兼容部分没有 dash 的番剧（有些接口只返回 durl）
+    elif "durl" in data:
+        # 这里只能下载合成流（无独立音频）
+        video_url = data["durl"][0]["url"]
+        audio_url = video_url    # 没有独立音频
+    else:
+        raise Exception("未找到视频流（dash/durl）信息。")
     return [title, audio_url, video_url]
 
 
@@ -116,6 +145,9 @@ def start_download():
 
     def run():
         try:
+            # 动态设置cookie
+            headers['cookie'] = cookie_entry.get().strip()
+
             download_button.config(state="disabled")
             progress_label.config(text="解析中...")
             progress_bar["value"] = 0
@@ -141,12 +173,16 @@ def update_progress(text, percent):
 # 创建窗口
 root = tk.Tk()
 root.title("B站视频下载器")
-root.geometry("400x200")
+root.geometry("400x250")
 
 tk.Label(root, text="请输入B站视频URL：").pack(pady=5)
 
 url_entry = tk.Entry(root, width=50)
 url_entry.pack(pady=5)
+
+tk.Label(root, text="（可选）请输入B站 Cookie：").pack(pady=5)
+cookie_entry = tk.Entry(root, width=50)
+cookie_entry.pack(pady=5)
 
 download_button = tk.Button(root, text="下载", command=start_download)
 download_button.pack(pady=5)
